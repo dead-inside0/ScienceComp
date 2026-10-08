@@ -1,7 +1,7 @@
 export const TEAM_SKIP_LIMIT = 5
-export const subjects = ['physics', 'computer-science', 'biology', 'chemistry', 'ess'] as const
+export const subjects = ['physics', 'computer-science', 'biology', 'chemistry', 'ess', 'math'] as const
 export type Subject = typeof subjects[number]
-export const subjectNames: Record<Subject, string> = { physics: 'Physics', 'computer-science': 'Computer Science', biology: 'Biology', chemistry: 'Chemistry', ess: 'ESS' }
+export const subjectNames: Record<Subject, string> = { physics: 'Physics', 'computer-science': 'Computer Science', biology: 'Biology', chemistry: 'Chemistry', ess: 'ESS', math: 'Mathematics' }
 export const ages = ['11–13', '14–16', '17–18'] as const
 export type AgeCategory = typeof ages[number]
 export type Language = 'en' | 'cs'

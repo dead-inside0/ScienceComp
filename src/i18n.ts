@@ -145,7 +145,7 @@ export function t(english: string, values: Record<string, string | number> = {})
   const text = language.value === 'cs' ? czech[english] ?? english : english
   return text.replace(/\{(\w+)\}/g, (match, key: string) => String(values[key] ?? match))
 }
-const czechSubjects: Record<Subject, string> = { physics: 'Fyzika', 'computer-science': 'Informatika', biology: 'Biologie', chemistry: 'Chemie', ess: 'ESS' }
+const czechSubjects: Record<Subject, string> = { physics: 'Fyzika', 'computer-science': 'Informatika', biology: 'Biologie', chemistry: 'Chemie', ess: 'ESS', math: 'Matematika' }
 export const subjectLabel = (subject: Subject) => language.value === 'cs' ? czechSubjects[subject] : subjectNames[subject]
 // Czech needs the accusative after verbs such as "catch" (1 rybu, 2 ryby, 5 ryb).
 export function fish(count: number, accusative = false): string {

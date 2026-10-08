@@ -38,7 +38,7 @@ function transactions(db: DatabaseSync) {
   db.exec = (sql: string) => { if (sql.startsWith('BEGIN')) begins.push(sql); exec(sql) }
   return begins
 }
-test('bank has 300 unique bilingual questions with all three answer types in every track', () => {
+test('bank has 360 unique bilingual questions with all three answer types in every track', () => {
   const ids = new Set<string>()
   const answerTypes = new Set<string>()
   for (const s of subjects) for (const age of ages) {
@@ -55,7 +55,7 @@ test('bank has 300 unique bilingual questions with all three answer types in eve
       for (const key of ['acceptedAnswers', 'correctIndex', 'numericAnswer', 'tolerance']) assert(!safe.includes(key))
     }
   }
-  assert.equal(ids.size, 300)
+  assert.equal(ids.size, 360)
   assert.equal(answerTypes.size, 3)
 })
 test('exact grading normalises only permitted differences', () => {
@@ -288,6 +288,8 @@ test('legacy database migration preserves teams, progress, sessions and position
   try {
     assert.equal(db.prepare('SELECT completed FROM progress').get()!.completed, 3)
     assert.equal(db.prepare('SELECT token_hash FROM sessions').get()!.token_hash, 'hash')
+    // A subject added since the team was created starts from its first question.
+    assert.deepEqual({ ...db.prepare("SELECT completed, attempts FROM progress WHERE subject = 'math'").get() }, { completed: 0, attempts: 0 })
     assert.equal(db.prepare('SELECT x FROM grid_positions').get()!.x, 4)
     db.prepare('UPDATE teams SET research = research - 5').run()
     assert.equal(db.prepare('SELECT research FROM teams').get()!.research, -3)

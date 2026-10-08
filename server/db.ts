@@ -1,4 +1,4 @@
-import { TEAM_SKIP_LIMIT } from '../shared/domain.js'
+import { TEAM_SKIP_LIMIT, subjects } from '../shared/domain.js'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -22,6 +22,8 @@ export function openDatabase(path: string) {
     );
     CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `)
+  // Teams created before a subject was added start it from its first question.
+  for (const subject of subjects) db.prepare('INSERT OR IGNORE INTO progress (team_id, subject, completed, attempts) SELECT id, ?, 0, 0 FROM teams').run(subject)
   // Existing installations had a non-negative balance constraint. Rebuild only
   // that table, preserving IDs and all child rows, so penalties can create debt.
   const teamSql = String(db.prepare("SELECT sql FROM sqlite_master WHERE name = 'teams'").get()!.sql)

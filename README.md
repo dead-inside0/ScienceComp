@@ -1,6 +1,6 @@
 # Science Competition
 
-Vue 3 + TypeScript + Vite, with an Express server and SQLite. Includes 300 questions in English and Czech, team access codes, admin controls, independent subject progress, Research, five team-wide skips and **The Commons**, a live fishing game on a shared map, fuelled by Research. No individual student accounts or external services.
+Vue 3 + TypeScript + Vite, with an Express server and SQLite. Includes 360 questions in English and Czech across six subjects (Physics, Computer Science, Biology, Chemistry, ESS and Mathematics), team access codes, admin controls, independent subject progress, Research, five team-wide skips and **The Commons**, a live fishing game on a shared map, fuelled by Research. No individual student accounts or external services.
 
 ## Run locally
 
@@ -42,7 +42,7 @@ For an internet deployment, terminate HTTPS at a reverse proxy and set secure co
 
 ## Competition rules
 
-- All five subject tracks are independent, ordered and selected by the team's age category.
+- All six subject tracks are independent, ordered and selected by the team's age category.
 - The admin starts one shared **60-minute** competition. Until then, questions are withheld and all play actions are blocked. At zero, both questions and game orders stop on the server. The timer appears on login, admin, Questions, Game and Standings screens and survives refreshes/restarts.
 - Multiple choice: correct on the first attempt earns **+10 Research**; the second attempt earns **0**. **Every valid submission from the third onward costs 5 Research**, whether correct or incorrect. Incorrect answers on the first two attempts cost nothing. Only a correct answer advances.
 - Text and numerical: correct on the first attempt earns the configured reward (default 10), the second earns half, and later attempts earn zero. Incorrect answers earn zero and never advance or reveal the answer. Malformed numerical input is rejected without counting an attempt.
@@ -56,7 +56,7 @@ Admin can rename/delete teams and change codes. Existing sessions remain valid a
 
 ## Subject booklets
 
-Edit URLs in **`server/booklets.ts`**, then restart the server (rebuild for production). Physics, Biology, Chemistry and Computer Science use the supplied PDF links. ESS has an empty URL, so it has no Booklet button. Booklets open in a new tab. There are no booklet settings in admin.
+Edit URLs in **`server/booklets.ts`**, then restart the server (rebuild for production). Physics, Biology and Chemistry use the supplied PDF links. Computer Science, ESS and Mathematics have empty URLs, so they have no Booklet button. Booklets open in a new tab. There are no booklet settings in admin.
 
 The 60-minute duration is `DURATION_SECONDS` in `server/competition.ts`. Set it between events; it is deliberately not an admin setting.
 
