@@ -10,7 +10,7 @@ import { competitionState } from '../server/competition.js'
 import { openDatabase } from '../server/db.js'
 import { loadQuestions, isCorrect, parseNumber, publicQuestion, type Question } from '../server/questions.js'
 import { TEAM_SKIP_LIMIT, subjects, ages, type TeamState, type AdminTeam, type CompetitionState } from '../shared/domain.js'
-import type { MatchState } from '../server/game/rules.js'
+import { distance, type GameMap, type MatchState } from '../server/game/rules.js'
 const bank = loadQuestions('./questions')
 const answerFor = (q: Question) => q.type === 'multiple-choice' ? String(q.correctIndex) : q.type === 'text' ? q.acceptedAnswers[0] : String(q.numericAnswer)
 async function serve(db: DatabaseSync) {
@@ -30,7 +30,7 @@ function edit(db: DatabaseSync, change: (state: MatchState) => void) {
   const state = JSON.parse(String(db.prepare('SELECT state FROM commons_match').get()!.state)) as MatchState
   change(state); db.prepare('UPDATE commons_match SET state = ?').run(JSON.stringify(state))
 }
-interface History { samples: { tick: number; teams: { id: string; fish: number; bonus: number }[] }[]; orders: { tick: number; team: string }[]; golden: unknown[] }
+interface History { samples: { tick: number; teams: { id: string; fish: number; bonus: number }[] }[]; orders: { tick: number; team: string; bait?: boolean }[] }
 const scoreAt = (history: History, tick: number) => Object.fromEntries(history.samples.find(s => s.tick === tick)!.teams.map(t => [t.id, t.fish + t.bonus]))
 // Records every transaction started on this connection.
 function transactions(db: DatabaseSync) {
@@ -179,24 +179,33 @@ test('competition API: multi-device atomic scoring, game, admin and restart pers
     assert.equal((await request('/team/skip', b.cookie, { subject: 'ess', questionId: afterSkips.progress.ess.question!.id })).status, 400)
     current = (await request<TeamState>('/team/state', a.cookie)).body
     assert.equal(current.team.research, 45)
-    // A fresh map: a school per team plus two, and both boats in the harbour.
+    // A fresh map: a fishing ground per team plus two, one golden ground, and both boats in the harbour.
     const game = current.game, map = game.map!, harbour = map.harbour
     assert(map.land.length === map.height && map.land.every(row => row.length === map.width))
-    assert.equal(game.schools.length, 4)
+    assert.deepEqual([game.schools.length, game.schools.filter(s => s.golden).length], [5, 1])
+    assert(game.schools.every(s => s.home === distance(map as GameMap, s, harbour)))
     assert.deepEqual(game.boats.map(b => [b.name, b.x, b.y, b.target, b.route]), [['Older Team', harbour.x, harbour.y, null, []], ['Photon Pigeons', harbour.x, harbour.y, null, []]])
     const land = map.land.flatMap((row, y) => [...row].flatMap((cell, x) => cell === '#' ? [{ x, y }] : []))[0]!
     for (const bad of [{ x: -1, y: 0 }, { x: map.width, y: 0 }, land, { x: 0, y: 0, school: 1 }, {}, { boat: 1, ground: 0 }]) assert.equal((await request('/team/game/order', a.cookie, bad)).status, 400, JSON.stringify(bad))
-    assert.deepEqual(await request('/team/game/order', a.cookie, { school: 999 }).then(r => [r.status, r.body.error]), [409, 'That school has gone. Choose another one.'])
-    // Photon Pigeons head for the farthest school; Older Team, without Research, for the nearest.
-    const far = [...game.schools].sort((x, y) => y.sail - x.sail)[0]!, near = [...game.schools].sort((x, y) => x.sail - y.sail)[0]!
+    assert.deepEqual(await request('/team/game/order', a.cookie, { school: 999 }).then(r => [r.status, r.body.error]), [409, 'Choose a fishing ground on the map.'])
+    assert.equal((await request('/team/game/order', a.cookie, { bait: 'yes' })).status, 400)
+    // The bait switch is private and stays until changed.
+    assert.deepEqual((await request<TeamState>('/team/game/order', a.cookie, { bait: true })).body.game.own, { fish: 0, bonus: 0, hold: 0, bait: true })
+    assert.equal((await request<TeamState>('/team/game/order', a.cookie, { bait: false })).body.game.own.bait, false)
+    // Photon Pigeons head for the farthest ground; Older Team, without Research, for the nearest ordinary one.
+    const far = [...game.schools].sort((x, y) => y.sail - x.sail)[0]!, near = game.schools.filter(s => !s.golden).sort((x, y) => x.sail - y.sail)[0]!
     atTick(db, 0)
     const sent = (await request<TeamState>('/team/game/order', a.cookie, { school: far.id })).body.game.boats.find(boat => boat.team === create.body.id)!
     assert.deepEqual([sent.target, sent.route.length], [{ school: far.id }, far.sail])
+    // The next three tiles, for drawing the boat moving between polls.
+    assert.deepEqual(sent.ahead, sent.route.slice(0, 3))
     assert.equal((await request('/team/game/order', c.cookie, { school: near.id })).status, 200)
-    // Every boat, order and route is public; Research and scores are not.
+    // Every boat, order and route is public; Research, scores, hold and bait are not.
     const observed = (await request<TeamState>('/team/state', c.cookie)).body.game
     assert.deepEqual(observed.boats.find(boat => boat.team === create.body.id)!.route, sent.route)
-    assert(!/research|spent|fish|bonus/.test(JSON.stringify(observed.boats)))
+    assert(!/research|spent|fish|bonus|hold|bait/.test(JSON.stringify(observed.boats)))
+    // Without Research the Older Team's boat will not move, and its lookahead says so.
+    assert.deepEqual(observed.boats.find(boat => boat.team === other.body.id)!.ahead, [harbour, harbour, harbour])
     // Three ticks on, concurrent reads play them exactly once: three tiles sailed, three Research burnt.
     const tickedFrom = atTick(db, 3)
     const reads = await Promise.all([a, b, c, a, c].map(device => request<TeamState>('/team/state', device.cookie)))
@@ -207,11 +216,11 @@ test('competition API: multi-device atomic scoring, game, admin and restart pers
     assert.equal(reads[0]!.body.team.research, 42)
     const waiting = reads[2]!.body.game.boats.find(boat => boat.team === other.body.id)!
     assert.deepEqual([waiting.x, waiting.y, reads[2]!.body.team.research], [harbour.x, harbour.y, 0])
-    // Parked on the nearest school, the boat lands a fish after five ticks there.
+    // Parked on a full ground of 20 fish, the boat lands a fish after four ticks there.
     edit(db, state => { Object.assign(state.boats.find(boat => boat.team === create.body.id)!, { x: near.x, y: near.y, target: { school: near.id } }) })
     atTick(db, 8)
     const fished = (await request<TeamState>('/team/state', b.cookie)).body
-    assert.deepEqual(fished.game.own, { fish: 1, bonus: 0 })
+    assert.deepEqual(fished.game.own, { fish: 1, bonus: 0, hold: 1, bait: false })
     assert.deepEqual(fished.standings.teams.map(t => t.score), [1, 0])
     assert.equal((await request<AdminTeam[]>('/admin/teams', admin)).body.find(t => t.id === create.body.id)!.score, 1)
     const saved = (await request<TeamState>('/team/state', a.cookie)).body
@@ -235,8 +244,8 @@ test('competition API: multi-device atomic scoring, game, admin and restart pers
     const history = (await request<History>('/admin/history', admin)).body
     assert.deepEqual(history.samples.map(s => s.tick), Array.from({ length: 60 }, (_, i) => (i + 1) * 30))
     assert.equal(scoreAt(history, 1800)[create.body.id], atEnd.game.own.fish + atEnd.game.own.bonus)
-    assert.deepEqual(history.orders.map(o => [o.tick, o.team]), [[0, create.body.id], [0, other.body.id]])
-    assert(history.golden.length > 0)
+    // Bait switches count as orders too, for calibrating how often teams look in.
+    assert.deepEqual(history.orders.map(o => [o.team, 'bait' in o]), [[create.body.id, true], [create.body.id, true], [create.body.id, false], [other.body.id, false]])
     assert.equal((await request('/admin/history', a.cookie)).status, 401)
     assert.equal((await request<TeamState>('/team/state', a.cookie)).body.team.research, atEnd.team.research)
     // No typed confirmation: the admin screen asks before it sends the reset.
@@ -245,8 +254,8 @@ test('competition API: multi-device atomic scoring, game, admin and restart pers
     assert.equal(reset.competition.status, 'waiting'); assert.equal(reset.competition.startedAt, null)
     assert.equal(reset.team.research, 0); assert.equal(reset.team.earned, 0); assert.equal(reset.team.skipsUsed, 0)
     assert(subjects.every(s => reset.progress[s].completed === 0))
-    assert.deepEqual([reset.game.map, reset.game.clock.tick, reset.game.schools, reset.game.boats, reset.game.golden], [null, 0, [], [], []])
-    assert.deepEqual(reset.game.own, { fish: 0, bonus: 0 })
+    assert.deepEqual([reset.game.map, reset.game.clock.tick, reset.game.schools, reset.game.boats], [null, 0, [], []])
+    assert.deepEqual(reset.game.own, { fish: 0, bonus: 0, hold: 0, bait: false })
     assert(reset.standings.teams.every(team => team.score === 0))
     assert.equal((await request<History>('/admin/history', admin)).body.samples.length, 0)
     await request(`/admin/teams/${create.body.id}`, admin, {}, 'DELETE')
@@ -433,13 +442,13 @@ test('standings freeze before the first post-cutoff action, persist across resta
     const a = (await call('/team/login', '', { code: 'AAAA' })).cookie
     const b = (await call('/team/login', '', { code: 'BBBB' })).cookie
     await call('/admin/start', admin, {})
-    db.exec('UPDATE teams SET research = 1000')
-    // Each team's boat sits on its own school, deep enough to fish all match.
+    db.exec('UPDATE teams SET research = 100000')
+    // Each team's boat sits on its own ground, deep enough to fish all match (between trips home to unload).
     edit(db, state => state.schools.slice(0, 2).forEach((school, i) => { school.fish = 10_000; Object.assign(state.boats.find(boat => boat.team === [aId, bId][i])!, { x: school.x, y: school.y, target: { school: school.id } }) }))
     atTick(db, 30)
     const before = (await call('/team/state', a)).data as TeamState
     assert.equal(before.standings.frozenAt, null)
-    assert.deepEqual(before.standings.teams.map(t => t.score), [6, 6])
+    assert(before.standings.teams.every(t => t.score > 0))
     // Jump past the cutoff (55:00, tick 1650) to tick 1710 with no request in between.
     // The first request is an order: ticks up to 1650 count towards the frozen
     // standings, the rest only towards the live scores. All of that, and the order
@@ -451,14 +460,15 @@ test('standings freeze before the first post-cutoff action, persist across resta
     assert.equal(after.game.clock.tick, 1710)
     const history = (await call('/admin/history', admin)).data as History
     assert.deepEqual(Object.fromEntries(after.standings.teams.map(t => [t.id, t.score])), scoreAt(history, 1650))
-    assert.deepEqual([scoreAt(history, 1650)[aId], after.game.own.fish], [330, 342])
+    // Alpha kept fishing after the cutoff; the order just given has not moved it yet.
+    assert(scoreAt(history, 1650)[aId]! < after.game.own.fish + after.game.own.bonus)
+    assert.equal(after.game.own.fish + after.game.own.bonus, scoreAt(history, 1710)[aId])
     atTick(db, 1800)
     const later = (await call('/team/state', a)).data as TeamState
     assert.deepEqual([later.game.clock.tick, later.standings], [1800, after.standings])
     const adminTeams = (await call('/admin/teams', admin)).data as AdminTeam[]
     const final = scoreAt((await call('/admin/history', admin)).data as History, 1800)
     assert.deepEqual(adminTeams.map(t => t.score), [final[aId], final[bId]])
-    assert(final[aId]! < 360 && final[bId] === 360) // Alpha left its school at tick 1710
     await close(); db.close(); db = openDatabase(path)
     server = createApp(db, bank, 'test-password').listen(0, '127.0.0.1')
     await new Promise<void>(resolve => server.once('listening', resolve))
@@ -473,9 +483,9 @@ test('standings freeze before the first post-cutoff action, persist across resta
     assert.equal(reset.standings.frozenAt, null)
     assert.deepEqual(reset.standings.teams.map(t => t.score), [0])
     await call('/admin/start', admin, {})
-    // One team now: three schools, and the starting Research.
+    // One team now: three ordinary grounds and a golden one, and the starting Research.
     const started = (await call('/team/state', a)).data as TeamState
-    assert.deepEqual([started.game.schools.length, started.team.research], [3, 10])
+    assert.deepEqual([started.game.schools.length, started.team.research], [4, 10])
     // Without Research the boat stays in the harbour.
     db.exec('UPDATE teams SET research = 0')
     atTick(db, 0)
@@ -558,7 +568,7 @@ test('a diamond-prototype database upgrades to the map game; an unreset diamond 
     await server.call('/admin/start', admin, {})
     await server.close(); db.close(); db = openDatabase(path); server = await serve(db)
     const next = (await server.call<TeamState>('/team/state', team.cookie)).body
-    assert.deepEqual([next.competition.status, next.game.schools.length, next.standings.frozenAt], ['running', 3, null])
+    assert.deepEqual([next.competition.status, next.game.schools.length, next.standings.frozenAt], ['running', 4, null])
     assert.equal(warnings.length, 3)
   } finally { console.warn = warn; await server?.close(); db.close(); rmSync(dir, { recursive: true, force: true }) }
 })
@@ -594,7 +604,7 @@ test('a three-ground Commons database upgrades: a running round ends and keeps i
     assert.equal(count(oldTables), 0)
     await call('/admin/start', admin, {})
     const next = (await call<TeamState>('/team/state', team.cookie)).body
-    assert.deepEqual([next.competition.status, next.game.schools.length, next.game.own], ['running', 3, { fish: 0, bonus: 0 }])
+    assert.deepEqual([next.competition.status, next.game.schools.length, next.game.own], ['running', 4, { fish: 0, bonus: 0, hold: 0, bait: false }])
   } finally { console.warn = warn; await close(); db.close() }
 })
 
@@ -621,7 +631,7 @@ test('reset needs no catch-up, so it also recovers a match that cannot be played
     assert.deepEqual([reset.competition.status, reset.game.clock.tick, reset.game.map], ['waiting', 0, null])
     assert.equal((await call<History>('/admin/history', admin)).body.samples.length, 0)
     await call('/admin/start', admin, {})
-    assert.deepEqual((await call<TeamState>('/team/state', team)).body.game.schools.map(s => s.fish), [8, 8, 8])
+    assert.deepEqual((await call<TeamState>('/team/state', team)).body.game.schools.map(s => s.fish), [5, 20, 20, 20])
   } finally { await close(); db.close() }
 })
 
@@ -636,8 +646,8 @@ test('a poll takes no write lock unless the game is due, and each request catche
     await call('/admin/teams', admin, { name: 'Alpha', age: '11–13', code: 'AAAA' })
     const team = (await call('/team/login', '', { code: 'AAAA' })).cookie
     await call('/admin/start', admin, {})
-    db.exec('UPDATE teams SET research = 1000')
-    // The boat fishes a school deep enough for the whole match.
+    db.exec('UPDATE teams SET research = 100000')
+    // The boat fishes a ground deep enough for the whole match (between trips home to unload).
     let own = 0
     edit(db, state => { const school = state.schools[0]!; own = school.id; school.fish = 10_000; Object.assign(state.boats[0]!, { x: school.x, y: school.y, target: { school: school.id } }) })
     const reads = [['/team/state', team], ['/admin/teams', admin], ['/admin/history', admin]]
