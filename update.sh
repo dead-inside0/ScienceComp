@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -e
 cd /home/pi/ScienceComp
+# A clock jump mid-round ends the round early; the README says what to do when this is not yes.
+echo "Clock synchronized: $(timedatectl show -p NTPSynchronized --value)"
 git pull
 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install
 npm run build

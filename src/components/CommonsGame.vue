@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { t, fish, tiles, points } from '../i18n'
+import { t, fish, tiles, points, language } from '../i18n'
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { teamState, acceptState, refreshState, session } from '../state'
 import { competition, serverTime } from '../competition'
@@ -38,6 +38,10 @@ const maxOf = (s: School) => s.golden ? rules.value.goldenMax : rules.value.scho
 const health = (s: School) => s.fish * 2 >= maxOf(s) ? 'healthy' : s.fish * 5 <= maxOf(s) ? 'overfished' : 'low'
 const visitors = (s: School) => game.value.boats.filter(b => sentTo(b.target) === s.id || (!b.route.length && same(b, s)))
 const radar = computed(() => [...game.value.schools].sort((a, b) => a.sail - b.sail))
+// Fish a boat lands per minute at this stock, without bait.
+const rate = (s: School) => t('~{rate} fish/min', { rate: (s.fish / rules.value.catchEffort * 60 / rules.value.tickSeconds).toLocaleString(language.value, { maximumFractionDigits: 1 }) })
+// Every ground regrows on the same tick.
+const regrowIn = computed(() => (rules.value.growthTicks - game.value.clock.tick % rules.value.growthTicks) * rules.value.tickSeconds)
 const label = (s: School) => s.golden
   ? `${t('Golden ground {count}/{max}', { count: s.fish, max: maxOf(s) })} · ${t('{points} a fish', { points: points(rules.value.goldenValue) })}`
   : `${t('Ground {count}/{max}', { count: s.fish, max: maxOf(s) })} · ${t(health(s))}`
@@ -50,6 +54,19 @@ watch(() => [game.value.own.fish, game.value.own.bonus] as const, ([f, b], [pf, 
   const id = ++popId
   pops.value.push({ id, text: `+${f + b - pf - pb}`, golden: b > pb })
   setTimeout(() => { pops.value = pops.value.filter(p => p.id !== id) }, 1400)
+})
+// Stock is public, so every change pops at its ground: a fish landed (not your own; your boat
+// shows that), or regrowth. A new map has new ids, so it starts quietly.
+const stockPops = ref<{ id: number; x: number; y: number; text: string; regrow: boolean }[]>([])
+watch(() => game.value.schools, (now, before) => {
+  const was = new Map(before.map(s => [s.id, s.fish]))
+  for (const s of now) {
+    const d = s.fish - (was.get(s.id) ?? s.fish)
+    if (!d || (d < 0 && me.value && same(me.value, s))) continue
+    const id = ++popId
+    stockPops.value.push({ id, x: s.x, y: s.y, text: `${d > 0 ? '+' : ''}${d}`, regrow: d > 0 })
+    setTimeout(() => { stockPops.value = stockPops.value.filter(p => p.id !== id) }, 1400)
+  }
 })
 
 // One destination at a time; one given meanwhile waits, and only the latest is sent.
@@ -218,17 +235,19 @@ onMounted(start); onActivated(start); onDeactivated(stop); onUnmounted(stop)
           </g>
           <!-- Counts go above the boats, which often sit on them. -->
           <text v-for="s in game.schools" :key="`n${s.id}`" class="glyph count" :x="s.x + 0.5" :y="s.y + 0.78">{{ s.fish }}</text>
+          <text v-for="p in stockPops" :key="`p${p.id}`" class="glyph pop" :class="p.regrow ? 'regrow' : 'taken'" :x="p.x + 0.5" :y="p.y - 0.1">{{ p.text }}</text>
         </svg>
       </div>
       <aside class="commons-side">
         <section class="radar" :aria-label="t('Fishing grounds')">
           <h2>{{ t('Fishing grounds') }}</h2>
+          <p v-if="game.clock.tick < game.clock.total" class="hint regrow-hint">{{ t('Grounds regrow in {seconds} s', { seconds: regrowIn }) }}</p>
           <ul>
             <li v-for="s in radar" :key="s.id">
               <button class="radar-item" :class="{ golden: s.golden, target: s.id === goal?.id }" :aria-pressed="s.id === goal?.id" @click="send({ school: s.id })">
                 <span class="radar-name">{{ label(s) }}</span>
                 <span class="radar-meta">
-                  <span>{{ tiles(s.sail) }} · {{ t('round trip to unload: {n} Research', { n: 2 * s.home * rules.fuelCost }) }}</span>
+                  <span>{{ rate(s) }} · {{ tiles(s.sail) }} · {{ t('round trip to unload: {n} Research', { n: 2 * s.home * rules.fuelCost }) }}</span>
                   <span v-for="b in visitors(s)" :key="b.team" class="radar-dot" :style="{ background: b.color }" :title="b.name" />
                   <span v-if="visitors(s).length > 1" class="crowded">{{ t('crowded') }}</span>
                 </span>

@@ -56,6 +56,8 @@ test('real browser: admin, multiple sessions, subject progress, shared game and 
   // Two teams: a fishing ground each, two spare and one golden. The boat waits in the harbour, and the Game tab says so.
   const list = (p: Page) => p.getByRole('region', { name: 'Fishing grounds' }).getByRole('button')
   await expect(list(a)).toHaveCount(5)
+  await expect(list(a).first()).toContainText('fish/min')
+  await expect(a.locator('.regrow-hint')).toHaveText(/^Grounds regrow in \d+ s$/)
   await expect(a.locator('.hud-status')).toHaveText('Idle. Tap a fishing ground on the map to send your boat.')
   // Only the frame loop moves boats: no CSS transition fights it.
   expect(await a.locator('.boat').first().evaluate(el => getComputedStyle(el).transitionProperty)).not.toContain('transform')
@@ -76,8 +78,10 @@ test('real browser: admin, multiple sessions, subject progress, shared game and 
   expect((await pigeons(c)).target).toEqual(orders[1])
   await expect(a.locator('.hud-status')).toContainText(/^Sailing to a fishing ground/)
   await expect(a.locator('.tab-alert')).toHaveCount(0)
-  // A minute on, the boat has burnt Research getting there and is fishing.
+  // A minute on, the boat has burnt Research getting there and is fishing; the other team sees the ground's stock drop pop up on its map.
+  await c.evaluate(`window.pops = 0; new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if (n.classList?.contains('pop')) window.pops++ }))).observe(document.querySelector('svg.sea'), { childList: true, subtree: true })`)
   await a.request.post('/__test/rewind/60000')
+  await expect.poll(() => c.evaluate('window.pops')).toBeGreaterThan(0)
   await expect(a.locator('.hud-status')).toContainText(/^Fishing: next fish in about \d+ s/)
   // Sprites sit on their tiles: the fishing boat is drawn centred on its ground.
   const offset = await a.evaluate(() => {

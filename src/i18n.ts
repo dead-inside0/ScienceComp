@@ -73,6 +73,8 @@ const czech: Record<string, string> = {
   "crowded": "přeplněné",
   "{points} a fish": "{points} za rybu",
   "round trip to unload: {n} Research": "cesta vyložit a zpět: výzkum {n}",
+  "~{rate} fish/min": "~{rate} ryb/min",
+  "Grounds regrow in {seconds} s": "Loviště dorostou za {seconds} s",
   "{fish} + {bonus} golden": "{fish} + {bonus} za zlaté",
   "Fuel": "Palivo",
   "Hold": "Náklad",
